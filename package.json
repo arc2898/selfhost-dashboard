@@ -1,0 +1,30 @@
+{
+  "name": "selfhost-dashboard",
+  "version": "1.0.0",
+  "description": "Self-hosted personal server dashboard - system monitor, file manager, media center, web terminal",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "setup": "node server/setup.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.17.0",
+    "systeminformation": "^5.22.11",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.6",
+    "cookie": "^0.6.0",
+    "helmet": "^7.1.0",
+    "express-rate-limit": "^7.2.0",
+    "multer": "^1.4.5-lts.1",
+    "archiver": "^7.0.1",
+    "adm-zip": "^0.5.12",
+    "mime-types": "^2.1.35",
+    "dotenv": "^16.4.5",
+    "node-pty": "^1.0.0"
+  }
+}

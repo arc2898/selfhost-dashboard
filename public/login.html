@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign in · Server Dashboard</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="login-body">
+  <div class="login-card">
+    <div class="login-logo">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="7" rx="2" stroke="#6ee7ff" stroke-width="1.6"/><rect x="2" y="14" width="20" height="7" rx="2" stroke="#6ee7ff" stroke-width="1.6"/><circle cx="6" cy="6.5" r="1" fill="#6ee7ff"/><circle cx="6" cy="17.5" r="1" fill="#6ee7ff"/></svg>
+      <h1>Server Dashboard</h1>
+    </div>
+    <p class="login-sub">Sign in to your private control panel</p>
+    <form id="loginForm">
+      <label>Username
+        <input type="text" id="username" autocomplete="username" required autofocus>
+      </label>
+      <label>Password
+        <input type="password" id="password" autocomplete="current-password" required>
+      </label>
+      <button type="submit" id="loginBtn">Sign in</button>
+      <p class="login-error" id="loginError" hidden></p>
+    </form>
+    <p class="login-footnote">Access is restricted. All sign-ins are logged.</p>
+  </div>
+<script>
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('loginBtn');
+  const err = document.getElementById('loginError');
+  err.hidden = true;
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: document.getElementById('username').value,
+        password: document.getElementById('password').value,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Login failed');
+
+    // Confirm the session cookie actually took before redirecting. Without
+    // this check, a cookie that silently failed to save (e.g. COOKIE_SECURE=true
+    // over plain http://) would send you to "/" only to be bounced straight
+    // back here with no explanation, which looks like a login loop.
+    const check = await fetch('/api/auth/me', { credentials: 'same-origin' });
+    if (!check.ok) {
+      throw new Error('Signed in, but the browser did not keep the session cookie. If COOKIE_SECURE=true in .env, switch it to false unless you are serving this over real HTTPS.');
+    }
+    window.location.href = '/';
+  } catch (e2) {
+    err.textContent = e2.message;
+    err.hidden = false;
+    btn.disabled = false;
+    btn.textContent = 'Sign in';
+  }
+});
+</script>
+</body>
+</html>

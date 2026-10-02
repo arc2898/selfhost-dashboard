@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Server Dashboard</title>
+<link rel="stylesheet" href="/css/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.3/chart.umd.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.5.0/css/xterm.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xterm/addon-fit/0.10.0/addon-fit.min.js"></script>
+</head>
+<body>
+<div id="app" class="app-shell" hidden>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="7" rx="2" stroke="#6ee7ff" stroke-width="1.6"/><rect x="2" y="14" width="20" height="7" rx="2" stroke="#6ee7ff" stroke-width="1.6"/><circle cx="6" cy="6.5" r="1" fill="#6ee7ff"/><circle cx="6" cy="17.5" r="1" fill="#6ee7ff"/></svg>
+      <span>Dashboard</span>
+    </div>
+    <nav class="nav">
+      <button class="nav-item active" data-view="dashboard">
+        <span class="ic">▦</span> Dashboard
+      </button>
+      <button class="nav-item" data-view="monitor">
+        <span class="ic">◔</span> System Monitor
+      </button>
+      <button class="nav-item" data-view="files">
+        <span class="ic">▤</span> Files
+      </button>
+      <button class="nav-item" data-view="media">
+        <span class="ic">▶</span> Media
+      </button>
+      <button class="nav-item" data-view="terminal">
+        <span class="ic">▌</span> Terminal
+      </button>
+      <button class="nav-item" data-view="settings">
+        <span class="ic">⚙</span> Settings
+      </button>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="status-dot" id="connDot"></div>
+      <span id="connLabel">Connecting…</span>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="hamburger" id="hamburger">☰</button>
+      <div class="topbar-search">
+        <input type="text" id="globalSearch" placeholder="Search files…">
+      </div>
+      <div class="topbar-right">
+        <span class="server-pill" id="serverPill">–</span>
+        <button class="icon-btn" id="themeToggle" title="Toggle theme">☾</button>
+        <div class="user-menu">
+          <button class="icon-btn" id="userMenuBtn">☺</button>
+          <div class="user-dropdown" id="userDropdown" hidden>
+            <div class="user-name" id="userName">–</div>
+            <button id="logoutBtn">Log out</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="content" id="content">
+      <!-- Views are rendered here by js/app.js -->
+    </main>
+  </div>
+</div>
+
+<div id="toastContainer" class="toast-container"></div>
+<div id="modalRoot"></div>
+
+<script src="/js/dashboard.js"></script>
+<script src="/js/monitor.js"></script>
+<script src="/js/files.js"></script>
+<script src="/js/media.js"></script>
+<script src="/js/terminal.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>
