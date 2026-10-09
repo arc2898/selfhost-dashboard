@@ -158,7 +158,7 @@ async function search(relDir, query, results = [], depth = 0) {
 function zipDirectoryToStream(relPath, res) {
   const full = safeResolve(relPath);
   const archive = archiver('zip', { zlib: { level: 6 } });
-  archive.on('error', err => { throw err; });
+  archive.on('error', err => res.destroy(err));
   archive.pipe(res);
   archive.directory(full, path.basename(full));
   archive.finalize();
@@ -166,7 +166,7 @@ function zipDirectoryToStream(relPath, res) {
 
 function zipMultipleToStream(relPaths, res, zipName) {
   const archive = archiver('zip', { zlib: { level: 6 } });
-  archive.on('error', err => { throw err; });
+  archive.on('error', err => res.destroy(err));
   archive.pipe(res);
   for (const p of relPaths) {
     const full = safeResolve(p);
@@ -181,7 +181,20 @@ async function extractZip(relPath, destRelDir) {
   const zipPath = safeResolve(relPath);
   const destDir = safeResolve(destRelDir);
   const zip = new AdmZip(zipPath);
-  // AdmZip resolves entries under destDir; still validate the destination itself.
+
+  for (const entry of zip.getEntries()) {
+    const entryName = entry.entryName.replace(/\\/g, '/');
+    const normalized = path.posix.normalize(entryName);
+    if (normalized === '..' || normalized.startsWith('../') || normalized.startsWith('/')) {
+      throw Object.assign(new Error('Zip entry escapes the extraction directory'), { status: 400 });
+    }
+    const target = path.resolve(destDir, entryName);
+    const relative = path.relative(destDir, target);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+      throw Object.assign(new Error('Zip entry escapes the extraction directory'), { status: 400 });
+    }
+  }
+
   zip.extractAllTo(destDir, true);
 }
 
