@@ -20,6 +20,8 @@ if not exist node_modules (
 if not exist .env (
   echo ==^> No .env found, creating one from .env.example...
   copy .env.example .env >nul
+  node -e "const fs=require('fs'),c=require('crypto'),p='.env';let s=fs.readFileSync(p,'utf8');if(s.includes('JWT_SECRET=change_this_to_a_long_random_string')){s=s.replace('JWT_SECRET=change_this_to_a_long_random_string','JWT_SECRET='+c.randomBytes(48).toString('hex'));fs.writeFileSync(p,s)}"
+  echo ==^> Generated a unique JWT_SECRET in .env.
   echo ==^> Edit .env now if you want to change the port, file root, etc.
   timeout /t 3 >nul
 )

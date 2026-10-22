@@ -11,18 +11,22 @@ const TEXT_EXT = new Set(['.txt', '.md', '.js', '.jsx', '.ts', '.tsx', '.json', 
   '.go', '.rs', '.rb', '.php', '.sql', '.gitignore', '.toml']);
 
 async function statEntry(fullPath, name) {
-  const st = await fsp.stat(fullPath);
+  // lstat avoids following a symlink just to populate directory metadata.
+  const st = await fsp.lstat(fullPath);
+  const isSymlink = st.isSymbolicLink();
+  const isDirectory = !isSymlink && st.isDirectory();
   const ext = path.extname(name).toLowerCase();
   return {
     name,
-    isDirectory: st.isDirectory(),
+    isDirectory,
+    isSymlink,
     sizeBytes: st.size,
     modifiedAt: st.mtime,
     createdAt: st.birthtime,
     permissions: '0' + (st.mode & 0o777).toString(8),
-    mimeType: st.isDirectory() ? null : (mime.lookup(ext) || 'application/octet-stream'),
+    mimeType: isDirectory || isSymlink ? null : (mime.lookup(ext) || 'application/octet-stream'),
     extension: ext,
-    isText: TEXT_EXT.has(ext),
+    isText: !isSymlink && TEXT_EXT.has(ext),
     isHidden: name.startsWith('.'),
   };
 }
@@ -177,27 +181,137 @@ function zipMultipleToStream(relPaths, res, zipName) {
   archive.finalize();
 }
 
+const MAX_ZIP_ENTRY_BYTES = 512 * 1024 * 1024;
+const MAX_ZIP_TOTAL_BYTES = 2 * 1024 * 1024 * 1024;
+
+function zipError(message, status = 400) {
+  return Object.assign(new Error(message), { status, publicMessage: message });
+}
+
+function assertContained(base, target) {
+  const relative = path.relative(base, target);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw zipError('Zip entry escapes the extraction directory');
+  }
+}
+
+async function ensureSafeDirectory(root, target) {
+  assertContained(root, target);
+  const relative = path.relative(root, target);
+  let current = root;
+  for (const part of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    let stat;
+    try {
+      stat = await fsp.lstat(current);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      try { await fsp.mkdir(current); } catch (mkdirError) {
+        if (mkdirError.code !== 'EEXIST') throw mkdirError;
+      }
+      stat = await fsp.lstat(current);
+    }
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw zipError('A symlink or non-directory blocks a safe extraction path');
+    }
+  }
+}
+
+async function inspectMerge(stagePath, destinationPath) {
+  const entries = await fsp.readdir(stagePath, { withFileTypes: true });
+  for (const entry of entries) {
+    const source = path.join(stagePath, entry.name);
+    const target = path.join(destinationPath, entry.name);
+    let existing = null;
+    try { existing = await fsp.lstat(target); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (existing && existing.isSymbolicLink()) {
+      throw zipError('Extraction refuses to follow an existing symbolic link');
+    }
+    if (entry.isDirectory()) {
+      if (existing && !existing.isDirectory()) throw zipError('Extraction would overwrite an existing file', 409);
+      if (existing) await inspectMerge(source, target);
+    } else if (existing) {
+      throw zipError('Extraction refuses to overwrite existing files', 409);
+    }
+  }
+}
+
+async function mergeStaged(stagePath, destinationPath, destinationRoot) {
+  const entries = await fsp.readdir(stagePath, { withFileTypes: true });
+  for (const entry of entries) {
+    const source = path.join(stagePath, entry.name);
+    const target = path.join(destinationPath, entry.name);
+    assertContained(destinationRoot, target);
+    if (entry.isDirectory()) {
+      await ensureSafeDirectory(destinationRoot, target);
+      await mergeStaged(source, target, destinationRoot);
+    } else {
+      await ensureSafeDirectory(destinationRoot, path.dirname(target));
+      await fsp.copyFile(source, target, fs.constants.COPYFILE_EXCL);
+    }
+  }
+}
+
 async function extractZip(relPath, destRelDir) {
   const zipPath = safeResolve(relPath);
   const destDir = safeResolve(destRelDir);
-  const zip = new AdmZip(zipPath);
+  const zipStat = await fsp.stat(zipPath);
+  if (!zipStat.isFile()) throw zipError('The archive path must be a file');
+  if (zipStat.size > MAX_ZIP_TOTAL_BYTES) throw zipError('Archive exceeds the compressed-size limit', 413);
+  const fileRoot = fs.realpathSync(require('../config').fileRoot);
+  await ensureSafeDirectory(fileRoot, destDir);
 
+  const zip = new AdmZip(zipPath);
+  const validated = [];
+  let totalBytes = 0;
   for (const entry of zip.getEntries()) {
-    const entryName = entry.entryName.replace(/\\/g, '/');
-    const normalized = path.posix.normalize(entryName);
-    if (normalized === '..' || normalized.startsWith('../') || normalized.startsWith('/')) {
-      throw Object.assign(new Error('Zip entry escapes the extraction directory'), { status: 400 });
+    const rawName = String(entry.entryName || '').replace(/\\/g, '/');
+    if (!rawName || rawName.includes(String.fromCharCode(0)) || rawName.startsWith('/') || /^[a-zA-Z]:/.test(rawName)) {
+      throw zipError('Zip contains an absolute or invalid entry path');
     }
-    const target = path.resolve(destDir, entryName);
-    const relative = path.relative(destDir, target);
-    if (relative.startsWith('..') || path.isAbsolute(relative)) {
-      throw Object.assign(new Error('Zip entry escapes the extraction directory'), { status: 400 });
+    const rawParts = rawName.split('/');
+    if (rawParts.some(part => part === '..' || part.includes(':'))) {
+      throw zipError('Zip entry escapes the extraction directory');
     }
+    const parts = rawParts.filter(part => part && part !== '.');
+    if (parts.length === 0) continue;
+    const unixMode = ((entry.header && entry.header.attr) >>> 16) & 0o170000;
+    if (unixMode === 0o120000) throw zipError('Symbolic links inside zip archives are not supported');
+    const isDirectory = Boolean(entry.isDirectory || rawName.endsWith('/'));
+    const declaredSize = isDirectory ? 0 : Number((entry.header && entry.header.size) || 0);
+    if (!Number.isSafeInteger(declaredSize) || declaredSize < 0 || declaredSize > MAX_ZIP_ENTRY_BYTES) {
+      throw zipError('A zip entry exceeds the per-file extraction limit', 413);
+    }
+    totalBytes += declaredSize;
+    if (totalBytes > MAX_ZIP_TOTAL_BYTES) throw zipError('Archive exceeds the total extraction limit', 413);
+    validated.push({ entry, parts, isDirectory });
   }
 
-  zip.extractAllTo(destDir, true);
+  const stage = await fsp.mkdtemp(path.join(destDir, '.upm-extract-'));
+  try {
+    let actualTotal = 0;
+    for (const item of validated) {
+      const target = path.join(stage, ...item.parts);
+      assertContained(stage, target);
+      if (item.isDirectory) {
+        await ensureSafeDirectory(stage, target);
+        continue;
+      }
+      await ensureSafeDirectory(stage, path.dirname(target));
+      const data = item.entry.getData();
+      if (!Buffer.isBuffer(data)) throw zipError('Could not read a zip entry');
+      if (data.length > MAX_ZIP_ENTRY_BYTES) throw zipError('A zip entry exceeds the per-file extraction limit', 413);
+      actualTotal += data.length;
+      if (actualTotal > MAX_ZIP_TOTAL_BYTES) throw zipError('Archive exceeds the total extraction limit', 413);
+      await fsp.writeFile(target, data, { flag: 'wx', mode: 0o600 });
+    }
+    await inspectMerge(stage, destDir);
+    await mergeStaged(stage, destDir, destDir);
+  } finally {
+    await fsp.rm(stage, { recursive: true, force: true });
+  }
 }
-
 module.exports = {
   listDirectory, mkdir, createFile, rename, remove, copyEntries, moveEntries,
   duplicate, readTextFile, writeTextFile, absolutePath, search,

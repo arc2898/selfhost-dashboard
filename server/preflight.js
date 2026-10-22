@@ -12,6 +12,20 @@ function checkNodeVersion() {
   }
 }
 
+function hasSecureJwtSecret(secret) {
+  return typeof secret === 'string' &&
+    Buffer.byteLength(secret, 'utf8') >= 32 &&
+    secret !== 'INSECURE_DEV_SECRET_CHANGE_ME' &&
+    !/change_this_to_a_long_random_string/i.test(secret);
+}
+
+function checkJwtSecret(secret) {
+  if (hasSecureJwtSecret(secret)) return true;
+  console.error('[preflight] JWT_SECRET is missing, too short, or still a template value.');
+  console.error('[preflight] Set a unique secret of at least 32 bytes in .env before starting the server.');
+  process.exit(1);
+}
+
 function checkCoreDependencies() {
   const required = [
     'express', 'ws', 'systeminformation', 'jsonwebtoken', 'bcryptjs',
@@ -48,4 +62,4 @@ function checkPortFree(port, host) {
   });
 }
 
-module.exports = { checkNodeVersion, checkCoreDependencies, checkTerminalSupport, checkPortFree };
+module.exports = { checkNodeVersion, hasSecureJwtSecret, checkJwtSecret, checkCoreDependencies, checkTerminalSupport, checkPortFree };

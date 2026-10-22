@@ -2,6 +2,7 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { verifyPassword, issueToken, audit, hasAnyUser } = require('../services/authService');
 const config = require('../config');
+const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -51,7 +52,7 @@ router.post('/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-router.get('/me', (req, res) => {
+router.get('/me', requireAuth, (req, res) => {
   res.json({ username: req.user.username, isAdmin: req.user.isAdmin });
 });
 

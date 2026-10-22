@@ -4,6 +4,7 @@ const path = require('path');
 const multer = require('multer');
 const fileService = require('../services/fileService');
 const { audit } = require('../services/authService');
+const parseByteRange = require('../utils/byteRange');
 
 const router = express.Router();
 
@@ -14,9 +15,19 @@ const upload = multer({
         cb(null, fileService.absolutePath(req.query.path || '.'));
       } catch (e) { cb(e); }
     },
-    filename: (req, file, cb) => cb(null, file.originalname),
+    filename: (req, file, cb) => {
+      const name = path.basename(String(file.originalname || '').replace(/\\/g, '/'));
+      const hasInvalidCharacter = [...name].some(char => {
+        const code = char.charCodeAt(0);
+        return code < 32 || code === 127 || '<>:"|?*'.includes(char);
+      });
+      if (!name || name === '.' || name === '..' || name.endsWith('.') || name.endsWith(' ') || hasInvalidCharacter) {
+        return cb(Object.assign(new Error('Invalid upload filename'), { status: 400, publicMessage: 'Invalid upload filename.' }));
+      }
+      cb(null, name);
+    },
   }),
-  limits: { fileSize: 20 * 1024 * 1024 * 1024 }, // 20GB ceiling; adjust to taste
+  limits: { fileSize: 2 * 1024 * 1024 * 1024, files: 100, fields: 20, parts: 120 }, // 2 GiB per file, bounded multipart count
 });
 
 router.get('/list', async (req, res, next) => {
@@ -130,26 +141,27 @@ router.post('/upload', (req, res, next) => {
   });
 });
 
-// Streams file content with HTTP range support (used by media preview inside the file manager)
+// Streams file content with validated HTTP range support.
 router.get('/raw', (req, res, next) => {
   try {
     const full = fileService.absolutePath(req.query.path);
     const stat = fs.statSync(full);
+    if (!stat.isFile()) return res.status(400).json({ error: 'Only files can be streamed.' });
     res.setHeader('Content-Type', require('mime-types').lookup(full) || 'application/octet-stream');
-    const range = req.headers.range;
+    res.setHeader('Accept-Ranges', 'bytes');
+    const range = parseByteRange(req.headers.range, stat.size);
+    if (range === false) {
+      res.setHeader('Content-Range', `bytes */${stat.size}`);
+      return res.status(416).end();
+    }
     if (!range) {
       res.setHeader('Content-Length', stat.size);
       return fs.createReadStream(full).pipe(res);
     }
-    const [startStr, endStr] = range.replace(/bytes=/, '').split('-');
-    const start = parseInt(startStr, 10);
-    const end = endStr ? parseInt(endStr, 10) : stat.size - 1;
-    res.writeHead(206, {
-      'Content-Range': `bytes ${start}-${end}/${stat.size}`,
-      'Accept-Ranges': 'bytes',
-      'Content-Length': end - start + 1,
-    });
-    fs.createReadStream(full, { start, end }).pipe(res);
+    res.status(206);
+    res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${stat.size}`);
+    res.setHeader('Content-Length', range.end - range.start + 1);
+    return fs.createReadStream(full, { start: range.start, end: range.end }).pipe(res);
   } catch (e) { next(e); }
 });
 

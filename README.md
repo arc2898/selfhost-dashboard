@@ -51,13 +51,16 @@ re-implemented per route.
 ### Authentication & security model
 - Username/password, `bcryptjs`-hashed, stored in `data/users.json` (created
   by `npm run setup` — nothing ships with a default password).
-- Session = JWT in an `httpOnly`, `SameSite=Strict` cookie. No token ever
+- Session = JWT in an `httpOnly`, `SameSite=Lax` cookie. No token ever
   touches `localStorage` or client JS.
-- The same cookie authenticates WebSocket upgrades (`server/index.js` verifies
-  it in the `upgrade` handler before a socket is ever accepted).
+- WebSocket upgrades require the session cookie and reject browser `Origin` headers that do not match the request host. WebSocket payloads are bounded; terminal sessions and input rates are limited.
 - `express-rate-limit` on `/api/auth/login` (10 attempts / 15 min) and on the
   whole `/api` surface (300 req/min) as a blanket throttle.
 - `helmet` for standard security headers.
+- **Admin-only process termination:** the process-kill endpoint requires an admin claim and accepts only `SIGTERM`, `SIGINT`, or `SIGKILL`; it refuses PID 1 and the server's own PID.
+- **Archive extraction:** zip entry paths are validated before extraction, symbolic links are rejected, content is staged before merge, collisions are not overwritten, and compressed/expanded sizes are bounded.
+- **Uploads and streaming:** upload filenames are reduced to safe basenames, multipart counts and per-file size are limited, and byte-range headers are validated before streaming.
+- **JWT secret:** server startup refuses the known default/template secret and requires at least 32 bytes. `start.sh` and `start.bat` generate a unique secret when creating a new `.env`.
 - **Path traversal:** `safeResolve()` resolves every user-supplied path
   against `FILE_ROOT` and throws if the result would land outside it —
   applied to every single file operation, including uploads, zip, and the
@@ -247,7 +250,17 @@ tells you which port — change `PORT` in `.env` or stop whatever else is using 
 
 ---
 
-## 6. Notes & honest limitations
+## 6. Tests
+
+Run the automated unit and security regression tests with:
+
+```bash
+npm test
+```
+
+GitHub Actions runs `npm ci` and `npm test` on Linux, macOS, and Windows. The tests use temporary directories and mocked inputs; they do not install packages, terminate real processes, or open a terminal session on the host.
+
+## 7. Notes & honest limitations
 
 - **MKV/HEVC playback** depends on the visiting browser's codec support, not
   the server — Chrome/Edge play MKV containers with H.264 fine but not all

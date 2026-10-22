@@ -2,6 +2,7 @@ const express = require('express');
 const os = require('os');
 const monitor = require('../services/systemMonitor');
 const { audit } = require('../services/authService');
+const { requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -17,10 +18,17 @@ router.get('/processes', async (req, res, next) => {
   try { res.json(await monitor.getProcesses()); } catch (e) { next(e); }
 });
 
-router.post('/processes/:pid/kill', async (req, res, next) => {
+router.post('/processes/:pid/kill', requireAdmin, async (req, res, next) => {
   try {
-    const pid = parseInt(req.params.pid, 10);
-    await monitor.killProcess(pid, req.body?.signal || 'SIGTERM');
+    const pid = Number(req.params.pid);
+    const signal = req.body?.signal || 'SIGTERM';
+    if (!Number.isSafeInteger(pid) || pid <= 1 || pid === process.pid) {
+      return res.status(400).json({ error: 'Invalid process ID.' });
+    }
+    if (!['SIGTERM', 'SIGKILL', 'SIGINT'].includes(signal)) {
+      return res.status(400).json({ error: 'Unsupported process signal.' });
+    }
+    await monitor.killProcess(pid, signal);
     audit('process_kill', { user: req.user.username, pid });
     res.json({ ok: true });
   } catch (e) { next(e); }

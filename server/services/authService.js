@@ -13,7 +13,8 @@ function loadUsers() {
 }
 
 function saveUsers(users) {
-  fs.writeFileSync(config.usersFile, JSON.stringify(users, null, 2));
+  fs.writeFileSync(config.usersFile, JSON.stringify(users, null, 2), { mode: 0o600 });
+  try { fs.chmodSync(config.usersFile, 0o600); } catch { /* Windows ACLs are managed by the OS */ }
 }
 
 function findUser(username) {
@@ -21,6 +22,12 @@ function findUser(username) {
 }
 
 async function createUser(username, password, { isAdmin = true } = {}) {
+  if (typeof username !== 'string' || !/^[A-Za-z0-9_.-]{1,64}$/.test(username)) {
+    throw new Error('Username must be 1–64 characters using letters, numbers, dot, underscore, or hyphen');
+  }
+  if (typeof password !== 'string' || password.length < 8) {
+    throw new Error('Password must contain at least 8 characters');
+  }
   const users = loadUsers();
   if (users.some(u => u.username.toLowerCase() === username.toLowerCase())) {
     throw new Error('User already exists');

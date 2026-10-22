@@ -6,7 +6,13 @@ module.exports = function errorHandler(err, req, res, _next) {
   let status = 500;
   let message = 'Something went wrong on the server.';
 
-  if (err.code === 'EACCESS_PATH') {
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    status = 413;
+    message = 'The uploaded file exceeds the 2 GiB limit.';
+  } else if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_PART_COUNT' || err.code === 'LIMIT_FIELD_COUNT') {
+    status = 400;
+    message = 'The upload contains too many files or fields.';
+  } else if (err.code === 'EACCESS_PATH') {
     status = 403;
     message = 'Access to that location is not permitted.';
   } else if (err.code === 'ENOENT') {

@@ -3,6 +3,8 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const config = require('../config');
+const { safeResolveInRoot } = require('../middleware/security');
+const parseByteRange = require('../utils/byteRange');
 
 const router = express.Router();
 
@@ -22,7 +24,7 @@ async function scan(dir, baseDir, depth = 0, results = []) {
   let entries;
   try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return results; }
   for (const entry of entries) {
-    if (entry.name.startsWith('.')) continue;
+    if (entry.name.startsWith('.') || entry.isSymbolicLink()) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       await scan(full, baseDir, depth + 1, results);
@@ -63,32 +65,30 @@ router.get('/library', async (req, res, next) => {
 // "dirIndex" selects which configured media directory to resolve against.
 router.get('/stream', (req, res, next) => {
   try {
-    const dirIndex = parseInt(req.query.dir || '0', 10);
+    const dirIndex = Number.parseInt(req.query.dir || '0', 10);
     const baseDir = config.mediaDirs[dirIndex];
-    if (!baseDir) return res.status(400).json({ error: 'Unknown media directory' });
-    const target = path.resolve(baseDir, req.query.path || '');
-    const base = baseDir.endsWith(path.sep) ? baseDir : baseDir + path.sep;
-    if (target !== baseDir && !target.startsWith(base)) {
-      return res.status(403).json({ error: 'Access to that location is not permitted.' });
+    if (!Number.isSafeInteger(dirIndex) || !baseDir) {
+      return res.status(400).json({ error: 'Unknown media directory' });
     }
+    const target = safeResolveInRoot(baseDir, req.query.path || '');
     const stat = fs.statSync(target);
+    if (!stat.isFile()) return res.status(400).json({ error: 'Only media files can be streamed.' });
     const mime = require('mime-types').lookup(target) || 'application/octet-stream';
-    const range = req.headers.range;
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Accept-Ranges', 'bytes');
+    const range = parseByteRange(req.headers.range, stat.size);
+    if (range === false) {
+      res.setHeader('Content-Range', `bytes */${stat.size}`);
+      return res.status(416).end();
+    }
     if (!range) {
-      res.setHeader('Content-Type', mime);
       res.setHeader('Content-Length', stat.size);
       return fs.createReadStream(target).pipe(res);
     }
-    const [startStr, endStr] = range.replace(/bytes=/, '').split('-');
-    const start = parseInt(startStr, 10);
-    const end = endStr ? parseInt(endStr, 10) : stat.size - 1;
-    res.writeHead(206, {
-      'Content-Range': `bytes ${start}-${end}/${stat.size}`,
-      'Accept-Ranges': 'bytes',
-      'Content-Length': end - start + 1,
-      'Content-Type': mime,
-    });
-    fs.createReadStream(target, { start, end }).pipe(res);
+    res.status(206);
+    res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${stat.size}`);
+    res.setHeader('Content-Length', range.end - range.start + 1);
+    return fs.createReadStream(target, { start: range.start, end: range.end }).pipe(res);
   } catch (e) { next(e); }
 });
 

@@ -9,9 +9,11 @@ const rateLimit = require('express-rate-limit');
 const http = require('http');
 const path = require('path');
 const { WebSocketServer } = require('ws');
+const { isAllowedWebSocketOrigin } = require('./ws/origin');
 
 const config = require('./config');
 preflight.checkTerminalSupport();
+preflight.checkJwtSecret(config.jwtSecret);
 const { requireAuth, requireAdmin, verifyWsRequest } = require('./middleware/auth');
 const errorHandler = require('./middleware/errorHandler');
 const { hasAnyUser } = require('./services/authService');
@@ -66,18 +68,30 @@ app.use(errorHandler);
 // --- HTTP + WebSocket servers -------------------------------------------
 const server = http.createServer(app);
 
-const statsWss = new WebSocketServer({ noServer: true });
-const terminalWss = new WebSocketServer({ noServer: true });
+const statsWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024, perMessageDeflate: false });
+const terminalWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024, perMessageDeflate: false });
 
 systemSocket.attach(statsWss);
 terminalSocket.attach(terminalWss);
 
 server.on('upgrade', (request, socket, head) => {
-  const { pathname } = new URL(request.url, `http://${request.headers.host}`);
-  const user = verifyWsRequest(request);
+  let pathname;
+  try {
+    pathname = new URL(request.url, `http://${request.headers.host || 'localhost'}`).pathname;
+  } catch {
+    socket.destroy();
+    return;
+  }
 
+  if (!isAllowedWebSocketOrigin(request.headers.origin, request.headers.host)) {
+    socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
+  const user = verifyWsRequest(request);
   if (!user) {
-    socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+    socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
     socket.destroy();
     return;
   }
@@ -87,6 +101,7 @@ server.on('upgrade', (request, socket, head) => {
   } else if (pathname === '/ws/terminal') {
     terminalWss.handleUpgrade(request, socket, head, ws => terminalWss.emit('connection', ws, request, user));
   } else {
+    socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
     socket.destroy();
   }
 });
