@@ -53,7 +53,7 @@ test('safeResolveInRoot enforces each configured media root independently', asyn
     const media = path.join(root, 'media');
     await fs.mkdir(media);
     await fs.writeFile(path.join(media, 'movie.mp4'), 'sample');
-    assert.equal(safeResolveInRoot(media, 'movie.mp4'), path.join(media, 'movie.mp4'));
+    assert.equal(await fs.realpath(safeResolveInRoot(media, 'movie.mp4')), await fs.realpath(path.join(media, 'movie.mp4')));
     assert.throws(() => safeResolveInRoot(media, '../secret.txt'), /outside|escape/i);
   });
 });

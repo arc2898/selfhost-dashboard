@@ -253,6 +253,21 @@ async function mergeStaged(stagePath, destinationPath, destinationRoot) {
   }
 }
 
+function validateZipEntryName(rawName) {
+  if (typeof rawName !== 'string') throw zipError('Zip contains an invalid entry path');
+  const normalized = rawName.replace(/\\/g, '/');
+  if (!normalized || normalized.includes(String.fromCharCode(0)) ||
+      normalized.startsWith('/') || /^[a-zA-Z]:/.test(normalized)) {
+    throw zipError('Zip contains an absolute or invalid entry path');
+  }
+  const rawParts = normalized.split('/');
+  if (rawParts.some(part => part === '..' || part.includes(':'))) {
+    throw zipError('Zip entry escapes the extraction directory');
+  }
+  const parts = rawParts.filter(part => part && part !== '.');
+  return parts.length ? parts : null;
+}
+
 async function extractZip(relPath, destRelDir) {
   const zipPath = safeResolve(relPath);
   const destDir = safeResolve(destRelDir);
@@ -266,16 +281,9 @@ async function extractZip(relPath, destRelDir) {
   const validated = [];
   let totalBytes = 0;
   for (const entry of zip.getEntries()) {
-    const rawName = String(entry.entryName || '').replace(/\\/g, '/');
-    if (!rawName || rawName.includes(String.fromCharCode(0)) || rawName.startsWith('/') || /^[a-zA-Z]:/.test(rawName)) {
-      throw zipError('Zip contains an absolute or invalid entry path');
-    }
-    const rawParts = rawName.split('/');
-    if (rawParts.some(part => part === '..' || part.includes(':'))) {
-      throw zipError('Zip entry escapes the extraction directory');
-    }
-    const parts = rawParts.filter(part => part && part !== '.');
-    if (parts.length === 0) continue;
+    const rawName = String(entry.entryName || '');
+    const parts = validateZipEntryName(rawName);
+    if (!parts) continue;
     const unixMode = ((entry.header && entry.header.attr) >>> 16) & 0o170000;
     if (unixMode === 0o120000) throw zipError('Symbolic links inside zip archives are not supported');
     const isDirectory = Boolean(entry.isDirectory || rawName.endsWith('/'));
@@ -315,5 +323,5 @@ async function extractZip(relPath, destRelDir) {
 module.exports = {
   listDirectory, mkdir, createFile, rename, remove, copyEntries, moveEntries,
   duplicate, readTextFile, writeTextFile, absolutePath, search,
-  zipDirectoryToStream, zipMultipleToStream, extractZip, statEntry,
+  zipDirectoryToStream, zipMultipleToStream, extractZip, statEntry, validateZipEntryName,
 };

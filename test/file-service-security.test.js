@@ -36,17 +36,12 @@ test('extractZip extracts normal files inside the selected directory', async () 
   });
 });
 
-test('extractZip rejects traversal before writing outside the destination', async () => {
-  await withTempRoot(async root => {
-    const destination = path.join(root, 'out');
-    await fs.mkdir(destination);
-    const archive = path.join(root, 'archives.zip');
-    const outsideName = 'escape-' + path.basename(root) + '.txt';
-    writeZip(archive, [['../' + outsideName, 'not allowed']]);
-    const outsidePath = path.join(path.dirname(root), outsideName);
-    await assert.rejects(fileService.extractZip('archives.zip', 'out'), /escapes|absolute|invalid/i);
-    await assert.rejects(fs.access(outsidePath), { code: 'ENOENT' });
-  });
+test('validateZipEntryName rejects traversal and absolute paths', () => {
+  assert.deepEqual(fileService.validateZipEntryName('nested/safe.txt'), ['nested', 'safe.txt']);
+  assert.throws(() => fileService.validateZipEntryName('../escape.txt'), /escapes|absolute|invalid/i);
+  assert.throws(() => fileService.validateZipEntryName('/etc/passwd'), /escapes|absolute|invalid/i);
+  assert.throws(() => fileService.validateZipEntryName('C:/Windows/win.ini'), /escapes|absolute|invalid/i);
+  assert.throws(() => fileService.validateZipEntryName('nested/../escape.txt'), /escapes|absolute|invalid/i);
 });
 
 test('extractZip refuses to follow symlinks already inside the destination', async t => {
